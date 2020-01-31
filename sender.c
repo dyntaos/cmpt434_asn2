@@ -11,24 +11,200 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <stdint.h>
 #include <string.h>
 #include <ctype.h>
-#include <sys/queue.h>
+
+#include <sys/types.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netdb.h>
+
+#include "sender.h"
 
 
-TAILQ_HEAD(send_buffer_head_t, send_buffer_item) send_buffer_head;
+struct buffered_frame **sequenced_frames;
+sequence_num_t sending_window_start = INITIAL_SEQ_NUM;
+size_t max_sequence_num = MAX_SEQ_NUM;
+size_t sending_window_size = 1;
+size_t unackd_frames = 0;
+uint16_t send_timeout = 1;
 
-struct send_buffer_head_t *send_buffer_headp;
-size_t send_buffer_size = 0;
-struct send_buffer_item {
-	char *text;
-	TAILQ_ENTRY(send_buffer_item) next_item;
-};
+
+
+
+void send_enqueue(struct buffered_frame *bframe) {
+	struct send_buffer_item *sbi;
+	sbi = (struct send_buffer_item*) malloc(sizeof(struct send_buffer_item));
+	sbi->bframe = bframe;
+	TAILQ_INSERT_HEAD(&send_buffer_head, sbi, next_item);
+	send_buffer_size++;
+}
+
+
+struct buffered_frame *send_dequeue(void) {
+	struct send_buffer_item *sbi;
+	struct buffered_frame *frame;
+
+	sbi = TAILQ_LAST(&send_buffer_head, send_buffer_head_t);
+	TAILQ_REMOVE(&send_buffer_head, sbi, next_item);
+	send_buffer_size--;
+	frame = sbi->bframe;
+	free(sbi);
+	return frame;
+}
+
+
+
+struct buffered_frame *create_buffered_frame(void *data, size_t data_len) {
+	static uint8_t next_sequence_number = INITIAL_SEQ_NUM;
+	struct buffered_frame *bframe;
+
+	bframe = (struct buffered_frame*) malloc(sizeof(struct buffered_frame));
+	bframe->frame.sequence_number = next_sequence_number;
+	next_sequence_number = (next_sequence_number + 1) % (max_sequence_num + 1);
+	bframe->frame.payload_length = data_len;
+	bframe->data = data;
+
+	return bframe;
+}
+
+
+
+int socket_init(char *host, char *port) {
+	struct addrinfo hints;
+	struct addrinfo *ainfo, *p;
+	int sockfd, rv;
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_DGRAM;
+	if (host == NULL) hints.ai_flags = AI_PASSIVE;
+
+	if ((rv = getaddrinfo(host, port, &hints, &ainfo)) != 0) {
+		fprintf(stderr, "[%s:%d]: Failed to obtain address info: %s\n", gai_strerror(rv), __FILE__, __LINE__);
+		return -1;
+	}
+
+	for (p = ainfo; p != NULL; p = p->ai_next) {
+		if ((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1) {
+			continue;
+		}
+
+		if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
+			close(sockfd);
+			continue;
+		}
+		break;
+	}
+
+	if (p == NULL) {
+		fprintf(stderr, "[%s:%d]: Failed to bind socket\n", __FILE__, __LINE__);
+		return -2;
+	}
+
+	freeaddrinfo(ainfo);
+	return sockfd;
+}
+
+
+
+int socket_send_next_frame(int fd) {
+	(void) fd; // TODO
+	if (unackd_frames >= sending_window_size) {
+		fprintf(stderr, "[%s:%d]: Attempt to send additional frame, when sending window is at its maximum size!\n", __FILE__, __LINE__);
+		return -1;
+	}
+
+	unackd_frames++;
+	return 1; // TODO
+}
+
+
+
+int socket_send_timeout(int fd) {
+	// TODO: Retransmit unack'd frames in sending window
+	(void) fd; // TODO
+	return 1; // TODO
+}
+
+
+
+int socket_receive(int fd) {
+	struct buffered_frame *bframe;
+	int recv_len;
+
+	bframe = (struct buffered_frame*) malloc(sizeof(struct buffered_frame));
+	bframe->data = NULL;
+	bframe->sent_time = 0;
+	bframe->state = RECVD;
+
+	recv_len = recv(fd, (void*) &bframe->frame, sizeof(struct frame), 0);
+
+	if (recv_len <= 0) {
+		fprintf(stderr, "[%s:%d]: Connection with receiver closed...\n", __FILE__, __LINE__);
+		exit(EXIT_FAILURE); // TODO: Failure?
+
+	} else if (recv_len != sizeof(struct frame)) {
+		fprintf(stderr, "[%s:%d]: Received unexpected number of bytes...\n", __FILE__, __LINE__);
+		exit(EXIT_FAILURE);
+	}
+
+	if (bframe->frame.frame_type == FRAME_TYPE_ACK) {
+		if (bframe->frame.payload_length != 0) {
+			// Ensure an ACK isn't sent with a payload, thus throwing the sender and receiver stream (DGRAM) out of sync
+			fprintf(stderr, "[%s:%d]: Received ACK with non-zero byte payload!\n", __FILE__, __LINE__);
+		}
+
+		socket_receive_ack(fd, bframe);
+
+	} else if (bframe->frame.frame_type == FRAME_TYPE_DATA) {
+		fprintf(stderr, "[%s:%d]: Sender received data frame!\n", __FILE__, __LINE__);
+
+	} else {
+		fprintf(stderr, "[%s:%d]: Sender received unknown frame type (%u)!\n", __FILE__, __LINE__, bframe->frame.frame_type);
+	}
+
+	return 1; // TODO
+}
+
+
+
+int socket_receive_ack(int fd, struct buffered_frame *bframe) {
+
+	(void) fd; // TODO
+
+	switch (sequenced_frames[bframe->frame.sequence_number]->state) {
+		case UNSENT:
+			fprintf(stderr, "[%s:%d]: Sender received ACK for unsent frame!\n", __FILE__, __LINE__);
+			break;
+
+		case SENT:
+			sequenced_frames[bframe->frame.sequence_number]->state = ACKD;
+			unackd_frames--;
+			while (sequenced_frames[sending_window_start]->state == ACKD) {
+				sending_window_start = (sending_window_start + 1) % (max_sequence_num + 1);
+			}
+			break;
+
+		case RECVD:
+			// TODO
+			break;
+
+		case ACKD:
+			// Reawknowledement of frame
+			// TODO
+			break;
+	}
+	return 1; // TODO
+}
+
 
 
 void validate_cli_args(int argc, char *argv[]) {
 	if (argc != 5) {
-		printf("Usage: %s ReceiverHostname ReceiverPort MaxSendingWindowSize TimeoutSeconds\n\n");
+		printf("Usage: %s ReceiverHostname ReceiverPort MaxSendingWindowSize TimeoutSeconds\n\n", argv[0]);
 		exit(EXIT_FAILURE);
 	}
 
@@ -61,42 +237,34 @@ void validate_cli_args(int argc, char *argv[]) {
 		}
 	}
 
+	// TODO: Sending window > 0
+	// TODO: Timeout > 0
+
 	for (size_t i = 0; i < strlen(argv[4]); i++) {
 		if (!isdigit(argv[4][i])) {
 			fprintf(stderr, "The timeout value provided must be numeric\n");
 			exit(EXIT_FAILURE);
 		}
 	}
-}
 
-
-void send_enqueue(char *text) {
-	struct send_buffer_item *sbi;
-	sbi = (struct send_buffer_item*) malloc(sizeof(struct send_buffer_item));
-	sbi->text = text;
-	TAILQ_INSERT_HEAD(&send_buffer_head, sbi, next_item);
-	send_buffer_size++;
-}
-
-
-char *send_dequeue(void) {
-	struct send_buffer_item *sbi;
-	char *text;
-
-	sbi = TAILQ_LAST(&send_buffer_head, send_buffer_head_t);
-	TAILQ_REMOVE(&send_buffer_head, sbi, next_item);
-	send_buffer_size--;
-	text = sbi->text;
-	free(sbi);
-	return text;
 }
 
 
 int main(int argc, char *argv[]) {
-	send_buffer_head = TAILQ_HEAD_INITIALIZER(send_buffer_head);
+
 	TAILQ_INIT(&send_buffer_head);
 
 	validate_cli_args(argc, argv);
+
+
+	sending_window_size = strtol(argv[3], NULL, 10);
+	if (sending_window_size + 1 >= max_sequence_num) { // TODO: Confirm inequaility
+		max_sequence_num = sending_window_size + 1; // TODO: Confirm
+	}
+
+	send_timeout = strtol(argv[4], NULL, 10);
+
+	sequenced_frames = (struct buffered_frame**) malloc((sizeof(struct buffered_frame) * max_sequence_num) + 1);
 
 
 
