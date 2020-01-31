@@ -3,8 +3,8 @@
 
 #include <time.h>
 
-#define FRAME_TYPE_DATA			0
-#define FRAME_TYPE_ACK			1
+#define FRAME_TYPE_DATA			1
+#define FRAME_TYPE_ACK			2
 
 #define INITIAL_SEQ_NUM			0
 #define MAX_SEQ_NUM				15

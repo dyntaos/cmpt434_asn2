@@ -20,7 +20,7 @@
 
 void validate_cli_args(int argc, char *argv[]) {
 	if (argc != 2) {
-		printf("Usage: %s LocalPort\n\n");
+		printf("Usage: %s LocalPort\n\n", argv[0]);
 		exit(EXIT_FAILURE);
 	}
 
