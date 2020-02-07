@@ -39,6 +39,11 @@ clean:
 
 
 
+$(OBJ)/udp.o: udp.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c -o $@ $<
+
+
+
 $(OBJ)/receiver.o: receiver.c
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c -o $@ $<
 
@@ -51,7 +56,7 @@ $(BIN)/receiver: $(OBJ)/receiver.o
 $(OBJ)/sender.o: sender.c
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c -o $@ $<
 
-$(BIN)/sender: $(OBJ)/sender.o
+$(BIN)/sender: $(OBJ)/sender.o $(OBJ)/udp.o
 	$(CC) -o $@ $^
 	ln -fs $@ ./sender
 
