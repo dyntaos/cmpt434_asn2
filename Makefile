@@ -47,7 +47,7 @@ $(OBJ)/udp.o: udp.c
 $(OBJ)/receiver.o: receiver.c
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c -o $@ $<
 
-$(BIN)/receiver: $(OBJ)/receiver.o
+$(BIN)/receiver: $(OBJ)/receiver.o $(OBJ)/udp.o
 	$(CC) -o $@ $^
 	ln -fs $@ ./receiver
 

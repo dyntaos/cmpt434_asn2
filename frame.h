@@ -3,15 +3,23 @@
 
 #include <time.h>
 
-#define FRAME_TYPE_DATA			1
-#define FRAME_TYPE_ACK			2
 
-#define INITIAL_SEQ_NUM			0
-#define MAX_SEQ_NUM				15
+// If the frame type is a handshake, the sequence number field
+// is used by the sender to communicate the sending window size,
+// and thus the largest sequence number is the sending window size.
+// This is because 0 is counted as a sequnce number and there is
+// (sending window size) + 1 possible sequence numbers
+#define FRAME_TYPE_HANDSHAKE				1
+#define FRAME_TYPE_DATA						2
+#define FRAME_TYPE_DATA_WITH_SEQ_RESET		3
+#define FRAME_TYPE_ACK						3
+
+#define INITIAL_SEQ_NUM						0
+#define MAX_SEQ_NUM							15
 
 
 typedef uint8_t 		frame_type_t;
-typedef uint8_t 		sequence_num_t;
+typedef uint16_t 		sequence_num_t;
 
 enum frame_state {UNSENT, SENT, RECVD, ACKD};
 

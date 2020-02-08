@@ -42,7 +42,7 @@ int socket_send_next_frame(int fd);
 int socket_send_frame(int fd, sequence_num_t sequence_number);
 int socket_send_timeout(int fd);
 int socket_receive(int fd);
-int socket_receive_ack(int fd, struct buffered_frame *bframe);
+void socket_receive_ack(struct buffered_frame *bframe);
 
 void validate_cli_args(int argc, char *argv[]);
 

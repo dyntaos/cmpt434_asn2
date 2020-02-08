@@ -36,6 +36,7 @@ sequence_num_t max_sequence_num = MAX_SEQ_NUM;
 size_t sending_window_size = 1;
 size_t unackd_frames = 0;
 uint16_t send_timeout = 1;
+char *receiver_host, *receiver_port;
 
 
 
@@ -72,7 +73,9 @@ struct buffered_frame *create_buffered_frame(void *data, size_t data_len) {
 		return NULL;
 	}
 	bframe->frame.sequence_number = next_sequence_number;
-	bframe->frame.frame_type = FRAME_TYPE_DATA;
+	bframe->frame.frame_type =
+		next_sequence_number == max_sequence_num ?
+			FRAME_TYPE_DATA_WITH_SEQ_RESET : FRAME_TYPE_DATA;
 	next_sequence_number = (next_sequence_number + 1) % (max_sequence_num + 1);
 	bframe->frame.payload_length = data_len;
 	bframe->state = UNSENT;
@@ -95,7 +98,6 @@ int socket_send_next_frame(int fd) {
 
 	printf("<DEBUG> Sending next frame...\n"); // TODO
 
-	sending_window_end = (sending_window_end + 1) % (max_sequence_num + 1);
 
 	// If the frame in the next slot in the circular buffer was
 	// not previously empty, free the data pointer in it.
@@ -109,6 +111,8 @@ int socket_send_next_frame(int fd) {
 	unackd_frames++;
 
 	socket_send_frame(fd, sending_window_end);
+
+	sending_window_end = (sending_window_end + 1) % (max_sequence_num + 1);
 
 	return 1; // TODO
 }
@@ -210,7 +214,7 @@ int socket_receive(int fd) {
 	bframe->sent_time = 0;
 	bframe->state = RECVD;
 
-	recv_len = recv(fd, (void*) &bframe->frame, sizeof(struct frame), 0);
+	recv_len = recvfrom(fd, (void*) &bframe->frame, sizeof(struct frame), 0, NULL, 0);
 
 	if (recv_len <= 0) {
 		fprintf(stderr, "[%s : %d]: Connection with receiver closed...\n", __FILE__, __LINE__);
@@ -228,10 +232,29 @@ int socket_receive(int fd) {
 			fprintf(stderr, "[%s : %d]: Received ACK with non-zero byte payload!\n", __FILE__, __LINE__);
 		}
 
-		socket_receive_ack(fd, bframe);
+		socket_receive_ack(bframe);
 
-	} else if (bframe->frame.frame_type == FRAME_TYPE_DATA) {
+	} else if (bframe->frame.frame_type == FRAME_TYPE_DATA || bframe->frame.frame_type == FRAME_TYPE_DATA_WITH_SEQ_RESET) {
 		fprintf(stderr, "[%s : %d]: Sender received data frame!\n", __FILE__, __LINE__);
+
+		// Read the number of payload bytes described in the header, so the connection remains synchronized
+		bframe->data = (char*) malloc(bframe->frame.payload_length);
+		if (bframe->data == NULL) {
+			fprintf(stderr, "[%s : %d]: Failed to allocate data buffer!\n", __FILE__, __LINE__);
+			exit(EXIT_FAILURE);
+		}
+
+		recv_len = recvfrom(fd, (void*) bframe->data, bframe->frame.payload_length, 0, NULL, 0);
+
+		if (recv_len < 0 || recv_len != bframe->frame.payload_length) {
+			fprintf(
+				stderr,
+				"[%s : %d]: Failed to receive the expected number of bytes from socket!\n",
+				__FILE__,
+				__LINE__
+			);
+			exit(EXIT_FAILURE);
+		}
 
 	} else {
 		fprintf(
@@ -243,14 +266,14 @@ int socket_receive(int fd) {
 		);
 	}
 
+	free(bframe->data);
+	free(bframe);
 	return 1; // TODO
 }
 
 
 
-int socket_receive_ack(int fd, struct buffered_frame *bframe) {
-
-	(void) fd; // TODO
+void socket_receive_ack(struct buffered_frame *bframe) {
 
 	switch (sequenced_frames[bframe->frame.sequence_number]->state) {
 		case UNSENT:
@@ -260,23 +283,24 @@ int socket_receive_ack(int fd, struct buffered_frame *bframe) {
 		case SENT:
 			sequenced_frames[bframe->frame.sequence_number]->state = ACKD;
 			unackd_frames--;
-			while (sequenced_frames[sending_window_start]->state == ACKD) {
+			while (sequenced_frames[sending_window_start] != NULL && sequenced_frames[sending_window_start]->state == ACKD) {
 				sending_window_start = (sending_window_start + 1) % (max_sequence_num + 1);
 			}
+			printf("Received ACK for sequence %u\n", bframe->frame.sequence_number);
 			break;
 
 		case RECVD:
-			// TODO
+			// TODO?
+			// The sender should not ever see a frame with the state RECV
 			printf("[%s : %d]: socket_receive_ack() RECVD\n", __FILE__, __LINE__);
 			break;
 
 		case ACKD:
-			// Reawknowledement of frame
-			// TODO
+			// Reawknowledement of frame -- disregard
+			// TODO?
 			printf("[%s : %d]: socket_receive_ack() ACKD\n", __FILE__, __LINE__);
 			break;
 	}
-	return 1; // TODO
 }
 
 
@@ -313,29 +337,32 @@ int epoll_add(int epollfd, int fd) {
 
 
 void validate_cli_args(int argc, char *argv[]) {
+	receiver_host = argv[1];
+	receiver_port = argv[2];
+
 	if (argc != 5) {
 		printf("Usage: %s ReceiverHostname ReceiverPort MaxSendingWindowSize TimeoutSeconds\n\n", argv[0]);
 		exit(EXIT_FAILURE);
 	}
 
-	if (strlen(argv[1]) < 2) {
+	if (strlen(receiver_host) < 2) {
 		fprintf(stderr, "Provide a valid server hostname or IP address\n");
 		exit(EXIT_FAILURE);
 	}
 
-	if (strlen(argv[2]) > 5) {
+	if (strlen(receiver_port) > 5) {
 		fprintf(stderr, "Invalid receiver port number\n");
 		exit(EXIT_FAILURE);
 	}
 
-	for (size_t i = 0; i < strlen(argv[2]); i++) {
-		if (!isdigit(argv[2][i])) {
+	for (size_t i = 0; i < strlen(receiver_port); i++) {
+		if (!isdigit(receiver_port[i])) {
 			fprintf(stderr, "The receiver port number provided must be numeric\n");
 			exit(EXIT_FAILURE);
 		}
 	}
 
-	if (strtoul(argv[2], NULL, 10) > 65535) {
+	if (strtoul(receiver_port, NULL, 10) > 65535) {
 		fprintf(stderr, "Receiver port number must be between 0 to 65535\n");
 		exit(EXIT_FAILURE);
 	}
@@ -357,6 +384,12 @@ void validate_cli_args(int argc, char *argv[]) {
 		}
 	}
 
+	send_timeout = strtol(argv[4], NULL, 10);
+
+	sending_window_size = strtol(argv[3], NULL, 10);
+	if (sending_window_size + 1 >= max_sequence_num) { // TODO: Confirm inequaility
+		max_sequence_num = sending_window_size + 1; // TODO: Confirm
+	}
 }
 
 
@@ -371,14 +404,6 @@ int main(int argc, char *argv[]) {
 
 	validate_cli_args(argc, argv);
 
-
-	sending_window_size = strtol(argv[3], NULL, 10);
-	if (sending_window_size + 1 >= max_sequence_num) { // TODO: Confirm inequaility
-		max_sequence_num = sending_window_size + 1; // TODO: Confirm
-	}
-
-	send_timeout = strtol(argv[4], NULL, 10);
-
 	sequenced_frames = (struct buffered_frame**) malloc((sizeof(struct buffered_frame) * max_sequence_num) + 1);
 
 	if (sequenced_frames == NULL) {
@@ -392,11 +417,11 @@ int main(int argc, char *argv[]) {
 	}
 	memset(sequenced_frames, 0, (sizeof(struct buffered_frame) * max_sequence_num) + 1);
 
-	sockfd = udp_client_init("localhost", "32326");
-	if (sockfd < 0 ) {
+	sockfd = udp_client_init(receiver_host, receiver_port);
+	if (sockfd < 0) {
 		fprintf(
 			stderr,
-			"[%s : %d]: Failed to socket file descriptor\n",
+			"[%s : %d]: Failed to open socket...\n",
 			__FILE__,
 			__LINE__
 		);
@@ -404,7 +429,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	epollfd = epoll_setup();
-	if (epollfd < 0 ) {
+	if (epollfd < 0) {
 		fprintf(
 			stderr,
 			"[%s : %d]: Failed to create epoll file descriptor\n",
@@ -418,7 +443,7 @@ int main(int argc, char *argv[]) {
 	epoll_add(epollfd, sockfd);
 
 	for (;;) {
-		printf("<DEBUG> Calling epoll_wait()...\n"); // TODO
+		//printf("<DEBUG> Calling epoll_wait()...\n"); // TODO
 
 		epoll_count = epoll_wait(epollfd, events, EPOLL_EVENT_COUNT, 2000); // TODO: Timeout
 		if (epoll_count == -1) {
@@ -427,7 +452,7 @@ int main(int argc, char *argv[]) {
 		}
 
 		if (epoll_count == 0) {
-			printf("<DEBUG> epoll_wait() timed out...\n"); // TODO
+			//printf("<DEBUG> epoll_wait() timed out...\n"); // TODO
 			continue;
 		}
 
@@ -435,7 +460,7 @@ int main(int argc, char *argv[]) {
 			if (events[i].data.fd == STDIN_FILENO) {
 				// STDIN
 				getline(&input, &input_size, stdin);
-				printf("<DEBUG> Read from stdin: %s\n", input); // TODO
+				//printf("<DEBUG> Read from stdin: %s\n", input); // TODO
 
 				queue_text = (char*) malloc(input_size + 1);
 				if (queue_text == NULL) {
@@ -462,13 +487,15 @@ int main(int argc, char *argv[]) {
 
 				send_enqueue(bframe);
 
-				// TODO
+				// TODO******
 
 				// Send until the sending window is full or there are no more messages to send
 				while (socket_send_next_frame(sockfd) >= 0);
 
 			} else if (events[i].data.fd == sockfd) {
 				// SOCKET
+
+				socket_receive(sockfd); // TODO: Will this eventually return an error to test for?
 
 			} else {
 				fprintf(
