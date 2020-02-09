@@ -39,11 +39,15 @@ struct buffered_frame *send_dequeue(void);
 struct buffered_frame *create_buffered_frame(void *data, size_t data_len);
 
 int socket_send_next_frame(int fd);
-int socket_send_frame(int fd, sequence_num_t sequence_number);
+void socket_send_frame(int fd, sequence_num_t sequence_number);
+void socket_receive(int fd);
+void socket_receive_ack(struct buffered_frame *bframe);
+
 time_t get_timeout(void);
 void service_timeout(int fd);
-int socket_receive(int fd);
-void socket_receive_ack(struct buffered_frame *bframe);
+
+int epoll_setup(void);
+int epoll_add(int epollfd, int fd);
 
 void validate_cli_args(int argc, char *argv[]);
 
