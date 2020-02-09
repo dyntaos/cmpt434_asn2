@@ -196,7 +196,7 @@ int process_received_frame(int sockfd, struct buffered_frame *bframe) {
 					input = NULL;
 
 				} else {
-					if (rand() % 100 > loss_probability) {
+					if ((rand() % 100) + 1 > loss_probability) {
 						printf("Sending ACK...\n");
 						transmit_ack(sockfd, next_frame);
 						next_frame++;

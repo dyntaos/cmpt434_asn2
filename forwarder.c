@@ -51,6 +51,13 @@ bool has_loss_probability = true; // TODO
 int socket_forward_frame(int fd, struct buffered_frame *bframe); // TODO HEADER
 
 
+void *get_in_addr(struct sockaddr *sa) {
+	if (sa->sa_family == AF_INET)
+		return &(((struct sockaddr_in*)sa)->sin_addr);
+	return &(((struct sockaddr_in6*)sa)->sin6_addr);
+}
+
+
 struct buffered_frame *socket_receiver_recv(int sockfd) {
 	struct buffered_frame *bframe;
 	int recv_len;
@@ -86,9 +93,9 @@ struct buffered_frame *socket_receiver_recv(int sockfd) {
 
 	} else if (bframe->frame.frame_type == FRAME_TYPE_DATA || bframe->frame.frame_type == FRAME_TYPE_DATA_WITH_SEQ_RESET) {
 
-		if (bframe->frame.frame_type == FRAME_TYPE_DATA_WITH_SEQ_RESET) {
-			max_sequence_buffer_num = bframe->frame.sequence_number;
-		}
+		//if (bframe->frame.frame_type == FRAME_TYPE_DATA_WITH_SEQ_RESET) {
+		//	max_sequence_buffer_num = bframe->frame.sequence_number;
+		//}
 
 		bframe->data = (char*) malloc(bframe->frame.payload_length);
 		if (bframe->data == NULL) {
@@ -194,7 +201,7 @@ int process_forwarding_frame(int sock_rx_fd, int sock_tx_fd, struct buffered_fra
 					bframe->frame.sequence_number,
 					bframe->data
 				);
-
+				printf("<DEBUG> start %u  size %lu  end %u\n", sending_window_start, sending_window_size, sending_window_end);
 				if (unackd_frames >= sending_window_size - 1) break;
 
 				if (!has_loss_probability) {
@@ -238,6 +245,7 @@ int process_forwarding_frame(int sock_rx_fd, int sock_tx_fd, struct buffered_fra
 					bframe->frame.sequence_number,
 					bframe->data
 				);
+				printf("<DEBUG> start %u  size %lu  end %u\n", sending_window_start, sending_window_size, sending_window_end);
 				transmit_ack(sock_rx_fd, next_frame - 1);
 
 			} else if (bframe->frame.sequence_number < next_frame - 1) {
@@ -247,6 +255,7 @@ int process_forwarding_frame(int sock_rx_fd, int sock_tx_fd, struct buffered_fra
 					bframe->frame.sequence_number,
 					bframe->data
 				);
+				printf("<DEBUG> start %u  size %lu  end %u\n", sending_window_start, sending_window_size, sending_window_end);
 				transmit_ack(sock_rx_fd, next_frame - 1);
 			}
 			break;
@@ -305,17 +314,22 @@ int socket_forward_frame(int fd, struct buffered_frame *bframe) {
 		return -1;
 	}
 
+	printf("seqbuff[]=%p    bframe=%p\n", (void*) sequenced_frames[sending_window_end % (max_sequence_buffer_num + 1)], (void*) bframe);
+	printf("bframe data => [%p] '%s'\n", bframe->data, bframe->data);
 	// If the frame in the next slot in the circular buffer was
 	// not previously empty, free the data pointer in it.
-	if (
-		sequenced_frames[sending_window_end % (max_sequence_buffer_num + 1)] != NULL &&
-		sequenced_frames[sending_window_end % (max_sequence_buffer_num + 1)]->data != NULL
-	) {
-		free(sequenced_frames[sending_window_end % (max_sequence_buffer_num + 1)]->data);
-		sequenced_frames[sending_window_end % (max_sequence_buffer_num + 1)]->data = NULL;
+	if (sequenced_frames[sending_window_end % (max_sequence_buffer_num + 1)] != NULL) {
+		if (sequenced_frames[sending_window_end % (max_sequence_buffer_num + 1)]->data != NULL) {
+			free(sequenced_frames[sending_window_end % (max_sequence_buffer_num + 1)]->data);
+			sequenced_frames[sending_window_end % (max_sequence_buffer_num + 1)]->data = NULL;
+		}
+		free(sequenced_frames[sending_window_end % (max_sequence_buffer_num + 1)]);
+		sequenced_frames[sending_window_end % (max_sequence_buffer_num + 1)] = NULL;
 	}
 
 	sequenced_frames[sending_window_end % (max_sequence_buffer_num + 1)] = bframe;
+
+	printf("bframe data => [%p]\n", bframe->data);
 
 	unackd_frames++;
 
@@ -365,6 +379,18 @@ void socket_send_frame(int fd, sequence_num_t sequence_number) {
 
 	if (sent_len != sequenced_frames[sequence_number % (max_sequence_buffer_num + 1)]->frame.payload_length) {
 		perror("");
+
+		printf(
+			"Sequence: %u\n"
+			"Max Seq Buffer # %u\n"
+			"Index: %u\n"
+			"Data pointer: %p\n",
+			sequence_number,
+			max_sequence_buffer_num,
+			sequence_number % (max_sequence_buffer_num + 1),
+			sequenced_frames[sequence_number % (max_sequence_buffer_num + 1)]->data
+		);
+
 		fprintf(
 			stderr,
 			"[%s : %d]: Failed to send payload of frame with sequence number %u; send() returned %d...\n",
@@ -398,6 +424,8 @@ void socket_sender_recv(int fd) {
 		fprintf(stderr, "[%s : %d]: Received unexpected number of bytes...\n", __FILE__, __LINE__);
 		exit(EXIT_FAILURE);
 	}
+
+	printf("<DEBUG> Got msg type %u from receiver...\n", bframe->frame.frame_type);
 
 	if (bframe->frame.frame_type == FRAME_TYPE_ACK) {
 		if (bframe->frame.payload_length != 0) {
@@ -454,7 +482,7 @@ void socket_receive_ack(struct buffered_frame *bframe) {
 			break;
 
 		case SENT:
-
+		case RECVD:
 			sequenced_frames[bframe->frame.sequence_number % (max_sequence_buffer_num + 1)]->state = ACKD;
 			unackd_frames--;
 			while (
@@ -470,16 +498,20 @@ void socket_receive_ack(struct buffered_frame *bframe) {
 			printf("Received ACK for sequence %u\n", bframe->frame.sequence_number);
 			break;
 
-		case RECVD:
+		/*case RECVD:
 			// The sender should not ever see a frame with the state RECV
 			fprintf(
 				stderr,
-				"[%s : %d]: Invalid state: socket_receive_ack() passed frame with state RECVD\n",
+				"[%s : %d]: Invalid state: socket_receive_ack() passed frame with state RECVD\n"
+				"\tFrame Sequence #%u\n"
+				"\tBuffered Sequence #%u\n",
 				__FILE__,
-				__LINE__
+				__LINE__,
+				bframe->frame.sequence_number,
+				sequenced_frames[bframe->frame.sequence_number % (max_sequence_buffer_num + 1)]->frame.sequence_number
 			);
 			break;
-
+		*/
 		case ACKD:
 			// The sender should not ever see a frame with the state ACKD (even if reACKd),
 			// since ACKd frames are freed the first time
@@ -619,6 +651,7 @@ void validate_cli_args(int argc, char *argv[]) {
 	if (sending_window_size + 1 >= max_sequence_buffer_num) {
 		max_sequence_buffer_num = sending_window_size + 1;
 	}
+	printf("SET MAX SEQ TO %u\n", max_sequence_buffer_num);
 }
 
 
@@ -743,6 +776,7 @@ int main(int argc, char *argv[]) {
 				// DATA FROM RECEIVER (ACKs)
 
 				socket_sender_recv(sock_tx_fd);
+
 				//while (socket_send_next_frame(sock_tx_fd) >= 0);
 
 			} else if (events[i].data.fd == sock_rx_fd) {
@@ -758,7 +792,7 @@ int main(int argc, char *argv[]) {
 					);
 				}
 
-				free(bframe);
+				//free(bframe); // TODO: FREE OR NOT?
 				bframe = NULL;
 
 			} else {

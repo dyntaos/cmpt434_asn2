@@ -15,7 +15,7 @@
 #define FRAME_TYPE_ACK						4
 
 #define INITIAL_SEQ_NUM						0
-#define MAX_SEQ_NUM							15
+#define MAX_SEQ_NUM							2
 
 
 typedef uint8_t 		frame_type_t;
