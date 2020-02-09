@@ -26,7 +26,8 @@ LIB = $(BUILD)/lib/$(ARCH)
 
 all: mkdirs \
 	$(BIN)/receiver \
-	$(BIN)/sender
+	$(BIN)/sender \
+	$(BIN)/forwarder
 
 
 mkdirs:
@@ -34,8 +35,9 @@ mkdirs:
 
 clean:
 	rm -rf ./build \
-			./receiver \
-			./sender
+		./receiver \
+		./sender \
+		./forwarder
 
 
 
@@ -59,4 +61,13 @@ $(OBJ)/sender.o: sender.c
 $(BIN)/sender: $(OBJ)/sender.o $(OBJ)/udp.o
 	$(CC) -o $@ $^
 	ln -fs $@ ./sender
+
+
+
+$(OBJ)/forwarder.o: forwarder.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c -o $@ $<
+
+$(BIN)/forwarder: $(OBJ)/forwarder.o $(OBJ)/udp.o
+	$(CC) -o $@ $^
+	ln -fs $@ ./forwarder
 

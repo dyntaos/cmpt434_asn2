@@ -6,3 +6,5 @@ build/obj/Linuxx86_64/sender.o
 sender
 receiver
 build/obj/Linuxx86_64/udp.o
+forwarder
+build/obj/Linuxx86_64/forwarder.o

@@ -35,7 +35,7 @@ uint8_t loss_probability = 0;
 bool has_loss_probability = false;
 
 
-struct buffered_frame *socket_receive(int sockfd) {
+struct buffered_frame *socket_receiver_recv(int sockfd) {
 	struct buffered_frame *bframe;
 	int recv_len;
 
@@ -317,7 +317,7 @@ int main(int argc, char *argv[]) {
 	printf("Receiver waiting for inbound frames...\n");
 	for (;;) {
 
-		bframe = socket_receive(sockfd);
+		bframe = socket_receiver_recv(sockfd);
 		if (process_received_frame(sockfd, bframe) < 0) {
 			fprintf(
 				stderr,
