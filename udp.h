@@ -17,8 +17,6 @@
 
 int udp_client_init(char *host, char *port);
 int udp_server_init(char *port);
-int udp_receive(int socket, void *buffer, size_t buffer_len, struct sockaddr *p, socklen_t *addr_len);
-int udp_send(int socket, void *buffer, size_t buffer_len, struct sockaddr *p, socklen_t addr_len);
 
 
 #endif // _UDP_H

@@ -78,18 +78,3 @@ int udp_server_init(char *port) {
 	return udp_client_init(NULL, port);
 }
 
-
-int udp_receive(int socket, void *buffer, size_t buffer_len, struct sockaddr *p, socklen_t *addr_len) {
-	int recvlen;
-
-	recvlen = recvfrom(socket, buffer, buffer_len, 0, p, addr_len);
-	return recvlen;
-}
-
-
-int udp_send(int socket, void *buffer, size_t buffer_len, struct sockaddr *p, socklen_t addr_len) {
-	int recvlen;
-
-	recvlen = sendto(socket, buffer, buffer_len, 0, p, addr_len);
-	return recvlen;
-}

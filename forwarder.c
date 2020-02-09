@@ -45,7 +45,7 @@ struct sockaddr sender;
 socklen_t sender_sock_len;
 
 uint8_t loss_probability = 0;
-bool has_loss_probability = true; // TODO
+bool has_loss_probability = false;
 
 
 int socket_forward_frame(int fd, struct buffered_frame *bframe); // TODO HEADER
@@ -92,10 +92,6 @@ struct buffered_frame *socket_receiver_recv(int sockfd) {
 		);
 
 	} else if (bframe->frame.frame_type == FRAME_TYPE_DATA || bframe->frame.frame_type == FRAME_TYPE_DATA_WITH_SEQ_RESET) {
-
-		//if (bframe->frame.frame_type == FRAME_TYPE_DATA_WITH_SEQ_RESET) {
-		//	max_sequence_buffer_num = bframe->frame.sequence_number;
-		//}
 
 		bframe->data = (char*) malloc(bframe->frame.payload_length);
 		if (bframe->data == NULL) {
@@ -201,7 +197,7 @@ int process_forwarding_frame(int sock_rx_fd, int sock_tx_fd, struct buffered_fra
 					bframe->frame.sequence_number,
 					bframe->data
 				);
-				printf("<DEBUG> start %u  size %lu  end %u\n", sending_window_start, sending_window_size, sending_window_end);
+
 				if (unackd_frames >= sending_window_size - 1) break;
 
 				if (!has_loss_probability) {
@@ -213,6 +209,15 @@ int process_forwarding_frame(int sock_rx_fd, int sock_tx_fd, struct buffered_fra
 						transmit_ack(sock_rx_fd, next_frame);
 						next_frame++;
 
+						if (socket_forward_frame(sock_tx_fd, bframe) < 0) {
+							fprintf(
+								stderr,
+								"[%s : %d]: socket_forward_frame() rejected frame!\n",
+								__FILE__,
+								__LINE__
+							);
+						}
+
 					} else {
 						printf("ACK withheld for sequence #%d...\n", bframe->frame.sequence_number);
 					}
@@ -220,22 +225,25 @@ int process_forwarding_frame(int sock_rx_fd, int sock_tx_fd, struct buffered_fra
 					free(input);
 					input = NULL;
 
-					if (socket_forward_frame(sock_tx_fd, bframe) < 0) {
-						printf("<DEBUG> ERROR FORWARDING\n");
-					}
 
 				} else {
 					if (rand() % 100 > loss_probability) {
 						printf("Sending ACK...\n");
 						transmit_ack(sock_rx_fd, next_frame);
 						next_frame++;
+
+						if (socket_forward_frame(sock_tx_fd, bframe) < 0) {
+							fprintf(
+								stderr,
+								"[%s : %d]: socket_forward_frame() rejected frame!\n",
+								__FILE__,
+								__LINE__
+							);
+						}
 					} else {
 						printf("Packet loss simulated for sequence #%d\n", bframe->frame.sequence_number);
 					}
 
-					if (socket_forward_frame(sock_tx_fd, bframe) < 0) {
-						printf("<DEBUG> ERROR FORWARDING\n");
-					}
 				}
 
 			} else if (bframe->frame.sequence_number == next_frame - 1) {
@@ -245,7 +253,7 @@ int process_forwarding_frame(int sock_rx_fd, int sock_tx_fd, struct buffered_fra
 					bframe->frame.sequence_number,
 					bframe->data
 				);
-				printf("<DEBUG> start %u  size %lu  end %u\n", sending_window_start, sending_window_size, sending_window_end);
+
 				transmit_ack(sock_rx_fd, next_frame - 1);
 
 			} else if (bframe->frame.sequence_number < next_frame - 1) {
@@ -255,7 +263,7 @@ int process_forwarding_frame(int sock_rx_fd, int sock_tx_fd, struct buffered_fra
 					bframe->frame.sequence_number,
 					bframe->data
 				);
-				printf("<DEBUG> start %u  size %lu  end %u\n", sending_window_start, sending_window_size, sending_window_end);
+
 				transmit_ack(sock_rx_fd, next_frame - 1);
 			}
 			break;
@@ -314,8 +322,6 @@ int socket_forward_frame(int fd, struct buffered_frame *bframe) {
 		return -1;
 	}
 
-	printf("seqbuff[]=%p    bframe=%p\n", (void*) sequenced_frames[sending_window_end % (max_sequence_buffer_num + 1)], (void*) bframe);
-	printf("bframe data => [%p] '%s'\n", bframe->data, bframe->data);
 	// If the frame in the next slot in the circular buffer was
 	// not previously empty, free the data pointer in it.
 	if (sequenced_frames[sending_window_end % (max_sequence_buffer_num + 1)] != NULL) {
@@ -328,8 +334,6 @@ int socket_forward_frame(int fd, struct buffered_frame *bframe) {
 	}
 
 	sequenced_frames[sending_window_end % (max_sequence_buffer_num + 1)] = bframe;
-
-	printf("bframe data => [%p]\n", bframe->data);
 
 	unackd_frames++;
 
@@ -379,18 +383,6 @@ void socket_send_frame(int fd, sequence_num_t sequence_number) {
 
 	if (sent_len != sequenced_frames[sequence_number % (max_sequence_buffer_num + 1)]->frame.payload_length) {
 		perror("");
-
-		printf(
-			"Sequence: %u\n"
-			"Max Seq Buffer # %u\n"
-			"Index: %u\n"
-			"Data pointer: %p\n",
-			sequence_number,
-			max_sequence_buffer_num,
-			sequence_number % (max_sequence_buffer_num + 1),
-			sequenced_frames[sequence_number % (max_sequence_buffer_num + 1)]->data
-		);
-
 		fprintf(
 			stderr,
 			"[%s : %d]: Failed to send payload of frame with sequence number %u; send() returned %d...\n",
@@ -424,8 +416,6 @@ void socket_sender_recv(int fd) {
 		fprintf(stderr, "[%s : %d]: Received unexpected number of bytes...\n", __FILE__, __LINE__);
 		exit(EXIT_FAILURE);
 	}
-
-	printf("<DEBUG> Got msg type %u from receiver...\n", bframe->frame.frame_type);
 
 	if (bframe->frame.frame_type == FRAME_TYPE_ACK) {
 		if (bframe->frame.payload_length != 0) {
@@ -498,20 +488,6 @@ void socket_receive_ack(struct buffered_frame *bframe) {
 			printf("Received ACK for sequence %u\n", bframe->frame.sequence_number);
 			break;
 
-		/*case RECVD:
-			// The sender should not ever see a frame with the state RECV
-			fprintf(
-				stderr,
-				"[%s : %d]: Invalid state: socket_receive_ack() passed frame with state RECVD\n"
-				"\tFrame Sequence #%u\n"
-				"\tBuffered Sequence #%u\n",
-				__FILE__,
-				__LINE__,
-				bframe->frame.sequence_number,
-				sequenced_frames[bframe->frame.sequence_number % (max_sequence_buffer_num + 1)]->frame.sequence_number
-			);
-			break;
-		*/
 		case ACKD:
 			// The sender should not ever see a frame with the state ACKD (even if reACKd),
 			// since ACKd frames are freed the first time
@@ -604,8 +580,8 @@ void validate_cli_args(int argc, char *argv[]) {
 	receiver_host = argv[2];
 	receiver_port = argv[3];
 
-	if (argc != 6) {
-		printf("Usage: %s ReceiverHostname ReceiverPort MaxSendingWindowSize TimeoutSeconds\n\n", argv[0]);
+	if (argc != 6 && argc != 7) {
+		printf("Usage: %s ReceiverHostname ReceiverPort MaxSendingWindowSize TimeoutSeconds [LossProbability%%]\n\n", argv[0]);
 		exit(EXIT_FAILURE);
 	}
 
@@ -645,23 +621,38 @@ void validate_cli_args(int argc, char *argv[]) {
 		}
 	}
 
+	if (argc == 7) {
+		if (strlen(argv[6]) > 2) {
+			fprintf(stderr, "Invalid loss probabilty (use values from 0 - 99)\n");
+			exit(EXIT_FAILURE);
+		}
+
+		for (size_t i = 0; i < strlen(argv[6]); i++) {
+			if (!isdigit(argv[6][i])) {
+				fprintf(stderr, "The loss probability provided must be an integer\n");
+				exit(EXIT_FAILURE);
+			}
+		}
+
+		loss_probability = strtol(argv[6], NULL, 10);
+		has_loss_probability = true;
+		srand(time(NULL));
+	}
+
 	send_timeout = strtol(argv[5], NULL, 10);
 
 	sending_window_size = strtol(argv[4], NULL, 10);
 	if (sending_window_size + 1 >= max_sequence_buffer_num) {
 		max_sequence_buffer_num = sending_window_size + 1;
 	}
-	printf("SET MAX SEQ TO %u\n", max_sequence_buffer_num);
 }
 
 
 int main(int argc, char *argv[]) {
 	int sock_rx_fd, sock_tx_fd, epollfd, epoll_count;
-	char *input = NULL; //, *queue_text;
-	//size_t input_size = 0;
+	char *input = NULL;
 	struct buffered_frame *bframe;
 	struct epoll_event events[EPOLL_EVENT_COUNT];
-	//int chars_read;
 
 
 	validate_cli_args(argc, argv);
@@ -732,52 +723,11 @@ int main(int argc, char *argv[]) {
 		}
 
 		for (int i = 0; i < epoll_count; i++) {
-			/*if (events[i].data.fd == STDIN_FILENO) {
-				// STDIN
-				chars_read = getline(&input, &input_size, stdin);
-				if (chars_read == -1) {
-					printf("Read to EOF\n");
-					// epoll_wait() will not wait if we are at EOF so delete stdin from the epoll fd
-					// This requires kernel 2.6.9 or greater for NULL arg
-					epoll_ctl(epollfd, EPOLL_CTL_DEL, STDIN_FILENO, NULL);
-					continue;
-				}
 
-				queue_text = (char*) malloc(input_size + 1);
-				if (queue_text == NULL) {
-					fprintf(
-						stderr,
-						"[%s : %d]: malloc() failed to allocate string buffer!\n",
-						__FILE__,
-						__LINE__
-					);
-				}
-
-				strncpy(queue_text, input, input_size);
-				bframe = create_buffered_frame(queue_text, input_size);
-
-				if (bframe == NULL) {
-					fprintf(
-						stderr,
-						"[%s : %d]: Failed to allocate memory for buffered frame!\n",
-						__FILE__,
-						__LINE__
-					);
-					exit(EXIT_FAILURE);
-				}
-
-				send_enqueue(bframe);
-
-				// Send until the sending window is full or there are no more messages to send
-				while (socket_send_next_frame(sock_tx_fd) >= 0);
-
-			} else*/
 			if (events[i].data.fd == sock_tx_fd) {
 				// DATA FROM RECEIVER (ACKs)
 
 				socket_sender_recv(sock_tx_fd);
-
-				//while (socket_send_next_frame(sock_tx_fd) >= 0);
 
 			} else if (events[i].data.fd == sock_rx_fd) {
 				// DATA FROM SENDER
