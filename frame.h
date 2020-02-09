@@ -12,7 +12,7 @@
 #define FRAME_TYPE_HANDSHAKE				1
 #define FRAME_TYPE_DATA						2
 #define FRAME_TYPE_DATA_WITH_SEQ_RESET		3
-#define FRAME_TYPE_ACK						3
+#define FRAME_TYPE_ACK						4
 
 #define INITIAL_SEQ_NUM						0
 #define MAX_SEQ_NUM							15

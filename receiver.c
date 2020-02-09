@@ -30,6 +30,9 @@ bool connected = false;
 struct sockaddr sender;
 socklen_t sender_sock_len;
 
+uint8_t loss_probability = 0;
+bool has_loss_probability = false;
+
 
 struct buffered_frame *socket_receive(int sockfd) {
 	struct buffered_frame *bframe;
@@ -73,9 +76,12 @@ struct buffered_frame *socket_receive(int sockfd) {
 	if (bframe->frame.frame_type == FRAME_TYPE_ACK) {
 		fprintf(
 			stderr,
-			"[%s : %d]: Receiver was sent an ACK frame!\n",
+			"[%s : %d]: Receiver was sent an ACK frame!\n\tFrame Type: %u\n\tSequence #%u\n\tData: %s\n\n",
 			__FILE__,
-			__LINE__
+			__LINE__,
+			bframe->frame.frame_type,
+			bframe->frame.sequence_number,
+			bframe->data
 		);
 
 	} else if (bframe->frame.frame_type == FRAME_TYPE_DATA || bframe->frame.frame_type == FRAME_TYPE_DATA_WITH_SEQ_RESET) {
@@ -184,26 +190,56 @@ int process_received_frame(int sockfd, struct buffered_frame *bframe) {
 
 		case RECVD:
 			if (next_frame == bframe->frame.sequence_number) {
-				printf("Got in-order frame with message:\n%s\nSend ACK? [y/n] ", bframe->data);
+				printf(
+					"==============================================================================\n"
+					"Got in-order frame with sequence #%u:\n%s\n",
+					bframe->frame.sequence_number,
+					bframe->data
+				);
 
-				getline(&input, &input_len, stdin);
+				if (!has_loss_probability) {
+					printf("Send ACK? [y/N] ");
+					getline(&input, &input_len, stdin);
 
-				if (input[0] == 'y' || input[0] == 'Y') {
-					printf("\nSending ACK...\n");
-					transmit_ack(sockfd, bframe->frame.sequence_number);
-					next_frame++;
-					if (max_sequence_num != 0) {
-						next_frame = next_frame % (max_sequence_num + 1);
+					if (input[0] == 'y' || input[0] == 'Y') {
+						printf("Sending ACK...\n\n");
+						transmit_ack(sockfd, next_frame);
+						next_frame++;
+
+					} else {
+						printf("ACK withheld for sequence #%d...\n", bframe->frame.sequence_number);
 					}
+
+					free(input);
+					input = NULL;
+
 				} else {
-					printf("\nIgnoring frame...\n");
+					if (rand() % 100 > loss_probability) {
+						printf("Sending ACK...\n");
+						transmit_ack(sockfd, next_frame);
+						next_frame++;
+					} else {
+						printf("Packet loss simulated for sequence #%d\n", bframe->frame.sequence_number);
+					}
 				}
 
-				free(input);
-				input = NULL;
+			} else if (bframe->frame.sequence_number == next_frame - 1) {
+				printf(
+					"==============================================================================\n"
+					"Got retransmission of last correctly received in-order message with sequence # %u:\n%s",
+					bframe->frame.sequence_number,
+					bframe->data
+				);
+				transmit_ack(sockfd, next_frame - 1);
 
-			} else {
-				printf("Got out-of-order frame with message\n");
+			} else if (bframe->frame.sequence_number < next_frame - 1) {
+				printf(
+					"==============================================================================\n"
+					"Got retransmission of previously ACKd message with sequence # %u:\n%s",
+					bframe->frame.sequence_number,
+					bframe->data
+				);
+				transmit_ack(sockfd, next_frame - 1);
 			}
 			break;
 
@@ -225,8 +261,8 @@ int process_received_frame(int sockfd, struct buffered_frame *bframe) {
 void validate_cli_args(int argc, char *argv[]) {
 	local_port = argv[1];
 
-	if (argc != 2) {
-		printf("Usage: %s LocalPort\n\n", argv[0]);
+	if (argc != 2 && argc != 3) {
+		printf("Usage: %s LocalPort [PacketLoss%%]\n\n", argv[0]);
 		exit(EXIT_FAILURE);
 	}
 
@@ -245,6 +281,24 @@ void validate_cli_args(int argc, char *argv[]) {
 	if (strtoul(local_port, NULL, 10) > 65535) {
 		fprintf(stderr, "Receiver port number must be between 0 to 65535\n");
 		exit(EXIT_FAILURE);
+	}
+
+	if (argc == 3) {
+		if (strlen(argv[2]) > 2) {
+			fprintf(stderr, "Invalid loss probabilty (use values from 0 - 99)\n");
+			exit(EXIT_FAILURE);
+		}
+
+		for (size_t i = 0; i < strlen(argv[2]); i++) {
+			if (!isdigit(argv[2][i])) {
+				fprintf(stderr, "The loss probability provided must be an integer\n");
+				exit(EXIT_FAILURE);
+			}
+		}
+
+		loss_probability = strtol(argv[2], NULL, 10);
+		has_loss_probability = true;
+		srand(time(NULL));
 	}
 }
 

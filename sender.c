@@ -16,7 +16,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <sys/epoll.h>
-
+#include <time.h>
 #include <sys/types.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
@@ -65,7 +65,7 @@ struct buffered_frame *send_dequeue(void) {
 
 
 struct buffered_frame *create_buffered_frame(void *data, size_t data_len) {
-	static uint8_t next_sequence_number = INITIAL_SEQ_NUM;
+	static uint16_t next_sequence_number = INITIAL_SEQ_NUM;
 	struct buffered_frame *bframe;
 
 	bframe = (struct buffered_frame*) malloc(sizeof(struct buffered_frame));
@@ -76,7 +76,7 @@ struct buffered_frame *create_buffered_frame(void *data, size_t data_len) {
 	bframe->frame.frame_type =
 		next_sequence_number == max_sequence_num ?
 			FRAME_TYPE_DATA_WITH_SEQ_RESET : FRAME_TYPE_DATA;
-	next_sequence_number = (next_sequence_number + 1) % (max_sequence_num + 1);
+	next_sequence_number++;
 	bframe->frame.payload_length = data_len;
 	bframe->state = UNSENT;
 	bframe->data = data;
@@ -96,23 +96,22 @@ int socket_send_next_frame(int fd) {
 		return -2;
 	}
 
-	printf("<DEBUG> Sending next frame...\n"); // TODO
-
-
 	// If the frame in the next slot in the circular buffer was
 	// not previously empty, free the data pointer in it.
-	if (sequenced_frames[sending_window_end] != NULL && sequenced_frames[sending_window_end]->data != NULL) {
-		free(sequenced_frames[sending_window_end]->data);
-		sequenced_frames[sending_window_end]->data = NULL;
+	if (
+		sequenced_frames[sending_window_end % (max_sequence_num + 1)] != NULL &&
+		sequenced_frames[sending_window_end % (max_sequence_num + 1)]->data != NULL
+	) {
+		free(sequenced_frames[sending_window_end % (max_sequence_num + 1)]->data);
+		sequenced_frames[sending_window_end % (max_sequence_num + 1)]->data = NULL;
 	}
 
-	sequenced_frames[sending_window_end] = send_dequeue();
+	sequenced_frames[sending_window_end % (max_sequence_num + 1)] = send_dequeue();
 
 	unackd_frames++;
 
 	socket_send_frame(fd, sending_window_end);
-
-	sending_window_end = (sending_window_end + 1) % (max_sequence_num + 1);
+	sending_window_end++;
 
 	return 1; // TODO
 }
@@ -122,36 +121,12 @@ int socket_send_next_frame(int fd) {
 int socket_send_frame(int fd, sequence_num_t sequence_number) {
 	int sent_len;
 
-	if (sequence_number > max_sequence_num) {
-		fprintf(
-			stderr,
-			"[%s : %d]: Sequence number provided (%u) exceeds the maximum sequence number (%u)!\n",
-			__FILE__,
-			__LINE__,
-			sequence_number,
-			max_sequence_num
-		);
-		return -1;
-	}
-
-	if (sequenced_frames[sequence_number]->state == ACKD) {
-		fprintf(
-			stderr,
-			"[%s : %d]: Sequence number provided (%u) has already been ACK'd!\n",
-			__FILE__,
-			__LINE__,
-			sequence_number
-		);
-		return -2;
-	}
-
-	sequenced_frames[sequence_number]->state = SENT;
-
-	printf("<DEBUG> Send()\n"); // TODO
+	sequenced_frames[sequence_number % (max_sequence_num + 1)]->state = SENT;
+	sequenced_frames[sequence_number % (max_sequence_num + 1)]->sent_time = time(NULL);
 
 	sent_len = sendto(
 		fd,
-		(void*) &sequenced_frames[sequence_number]->frame,
+		(void*) &sequenced_frames[sequence_number % (max_sequence_num + 1)]->frame,
 		sizeof(struct frame),
 		0,
 		NULL,
@@ -172,14 +147,14 @@ int socket_send_frame(int fd, sequence_num_t sequence_number) {
 
 	sent_len = sendto(
 		fd,
-		(void*) sequenced_frames[sequence_number]->data,
-		sequenced_frames[sequence_number]->frame.payload_length,
+		(void*) sequenced_frames[sequence_number % (max_sequence_num + 1)]->data,
+		sequenced_frames[sequence_number % (max_sequence_num + 1)]->frame.payload_length,
 		0,
 		NULL,
 		0
 	);
 
-	if (sent_len != sequenced_frames[sequence_number]->frame.payload_length) {
+	if (sent_len != sequenced_frames[sequence_number % (max_sequence_num + 1)]->frame.payload_length) {
 		perror("");
 		fprintf(
 			stderr,
@@ -197,10 +172,44 @@ int socket_send_frame(int fd, sequence_num_t sequence_number) {
 
 
 
-int socket_send_timeout(int fd) {
-	// TODO: Retransmit unack'd frames in sending window
-	(void) fd; // TODO
-	return 1; // TODO
+time_t get_timeout(void) {
+	time_t min_time = send_timeout, i_time, curr_time;
+
+	if (unackd_frames == 0) {
+		return -1;
+	}
+
+	curr_time = time(NULL);
+
+	for (int i = sending_window_start; i < sending_window_end; i++) {
+		if (sequenced_frames[i % (max_sequence_num + 1)] == NULL || sequenced_frames[i % (max_sequence_num + 1)]->state != SENT) continue;
+		i_time = curr_time + send_timeout - sequenced_frames[i % (max_sequence_num + 1)]->sent_time;
+		if (i_time < min_time) {
+			min_time = i_time;
+		}
+	}
+	return min_time * 1000;
+}
+
+
+
+void service_timeout(int fd) {
+	time_t i_time, curr_time;
+
+	if (unackd_frames == 0) {
+		return;
+	}
+
+	curr_time = time(NULL);
+
+	for (int i = sending_window_start; i < sending_window_end; i++) {
+		if (sequenced_frames[i % (max_sequence_num + 1)] == NULL || sequenced_frames[i % (max_sequence_num + 1)]->state != SENT) continue;
+		i_time = curr_time + send_timeout - sequenced_frames[i % (max_sequence_num + 1)]->sent_time;
+
+		if (i_time >= send_timeout) {
+			socket_send_frame(fd, sequenced_frames[i % (max_sequence_num + 1)]->frame.sequence_number);
+		}
+	}
 }
 
 
@@ -275,16 +284,24 @@ int socket_receive(int fd) {
 
 void socket_receive_ack(struct buffered_frame *bframe) {
 
-	switch (sequenced_frames[bframe->frame.sequence_number]->state) {
+	switch (sequenced_frames[bframe->frame.sequence_number % (max_sequence_num + 1)]->state) {
 		case UNSENT:
 			fprintf(stderr, "[%s : %d]: Sender received ACK for unsent frame!\n", __FILE__, __LINE__);
 			break;
 
 		case SENT:
-			sequenced_frames[bframe->frame.sequence_number]->state = ACKD;
+
+			sequenced_frames[bframe->frame.sequence_number % (max_sequence_num + 1)]->state = ACKD;
 			unackd_frames--;
-			while (sequenced_frames[sending_window_start] != NULL && sequenced_frames[sending_window_start]->state == ACKD) {
-				sending_window_start = (sending_window_start + 1) % (max_sequence_num + 1);
+			while (
+				sequenced_frames[sending_window_start % (max_sequence_num + 1)] != NULL &&
+				sequenced_frames[sending_window_start % (max_sequence_num + 1)]->state == ACKD
+			) {
+				sequenced_frames[sending_window_start % (max_sequence_num + 1)]->state = UNSENT;
+				free(sequenced_frames[sending_window_start % (max_sequence_num + 1)]->data);
+				sequenced_frames[sending_window_start % (max_sequence_num + 1)]->data = NULL;
+
+				sending_window_start++;
 			}
 			printf("Received ACK for sequence %u\n", bframe->frame.sequence_number);
 			break;
@@ -324,7 +341,7 @@ int epoll_add(int epollfd, int fd) {
 	struct epoll_event event;
 
 	event.data.fd = fd;
-	event.events = EPOLLIN; // TODO: EPOLLET??
+	event.events = EPOLLIN;
 
 	if (epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event)) {
 		// TODO
@@ -385,6 +402,7 @@ void validate_cli_args(int argc, char *argv[]) {
 	}
 
 	send_timeout = strtol(argv[4], NULL, 10);
+	//printf("<DEBUG> Timeout: %u\n", send_timeout);
 
 	sending_window_size = strtol(argv[3], NULL, 10);
 	if (sending_window_size + 1 >= max_sequence_num) { // TODO: Confirm inequaility
@@ -399,6 +417,7 @@ int main(int argc, char *argv[]) {
 	size_t input_size = 0;
 	struct buffered_frame *bframe;
 	struct epoll_event events[EPOLL_EVENT_COUNT];
+	int chars_read;
 
 	TAILQ_INIT(&send_buffer_head);
 
@@ -443,24 +462,30 @@ int main(int argc, char *argv[]) {
 	epoll_add(epollfd, sockfd);
 
 	for (;;) {
-		//printf("<DEBUG> Calling epoll_wait()...\n"); // TODO
 
-		epoll_count = epoll_wait(epollfd, events, EPOLL_EVENT_COUNT, 2000); // TODO: Timeout
+		epoll_count = epoll_wait(epollfd, events, EPOLL_EVENT_COUNT, get_timeout());
+
 		if (epoll_count == -1) {
 			perror("epoll_wait");
 			exit(EXIT_FAILURE);
 		}
 
 		if (epoll_count == 0) {
-			//printf("<DEBUG> epoll_wait() timed out...\n"); // TODO
+			service_timeout(sockfd);
 			continue;
 		}
 
 		for (int i = 0; i < epoll_count; i++) {
 			if (events[i].data.fd == STDIN_FILENO) {
 				// STDIN
-				getline(&input, &input_size, stdin);
-				//printf("<DEBUG> Read from stdin: %s\n", input); // TODO
+				chars_read = getline(&input, &input_size, stdin);
+				if (chars_read == -1) {
+					printf("Read to EOF\n");
+					// epoll_wait() will not wait if we are at EOF so delete stdin from the epoll fd
+					// This requires kernel 2.6.9 or greater for NULL arg
+					epoll_ctl(epollfd, EPOLL_CTL_DEL, STDIN_FILENO, NULL);
+					continue;
+				}
 
 				queue_text = (char*) malloc(input_size + 1);
 				if (queue_text == NULL) {
@@ -496,6 +521,8 @@ int main(int argc, char *argv[]) {
 				// SOCKET
 
 				socket_receive(sockfd); // TODO: Will this eventually return an error to test for?
+
+				while (socket_send_next_frame(sockfd) >= 0);
 
 			} else {
 				fprintf(
