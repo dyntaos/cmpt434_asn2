@@ -581,7 +581,7 @@ void validate_cli_args(int argc, char *argv[]) {
 	receiver_port = argv[3];
 
 	if (argc != 6 && argc != 7) {
-		printf("Usage: %s ReceiverHostname ReceiverPort MaxSendingWindowSize TimeoutSeconds [LossProbability%%]\n\n", argv[0]);
+		printf("Usage: %s ReceiverHostname ReceiverPort MaxSendingWindowSize TimeoutSeconds [PacketLoss%%]\n\n", argv[0]);
 		exit(EXIT_FAILURE);
 	}
 
