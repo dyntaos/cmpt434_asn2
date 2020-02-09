@@ -24,7 +24,8 @@
 char *local_port;
 
 sequence_num_t next_frame = 0;
-uint16_t max_sequence_num = 0; // This is set when the receiver gets a frame with the type of FRAME_TYPE_DATA_WITH_SEQ_RESET
+// This is set when the receiver gets a frame with the type of FRAME_TYPE_DATA_WITH_SEQ_RESET
+uint16_t max_sequence_buffer_num = 0;
 
 bool connected = false;
 struct sockaddr sender;
@@ -43,24 +44,7 @@ struct buffered_frame *socket_receive(int sockfd) {
 	bframe->sent_time = 0;
 	bframe->state = RECVD;
 
-
-	//if (connected) {
-	//	recv_len = recvfrom(sockfd, (void*) &bframe->frame, sizeof(struct frame), 0, NULL, 0);
-	//} else {
-		recv_len = recvfrom(sockfd, (void*) &bframe->frame, sizeof(struct frame), 0, &sender, &sender_sock_len);
-		/*if (recv_len > 0) {
-			if (connect(sockfd, &sender, sender_sock_len) == -1) {
-				fprintf(
-					stderr,
-					"[%s : %d]: Failed to connect() socket to sender...\n",
-					__FILE__,
-					__LINE__
-				);
-				return NULL;
-			}
-			connected = true;
-		}*/
-	//}
+	recv_len = recvfrom(sockfd, (void*) &bframe->frame, sizeof(struct frame), 0, &sender, &sender_sock_len);
 
 	if (recv_len <= 0) {
 		fprintf(stderr, "[%s : %d]: Connection with sender closed...\n", __FILE__, __LINE__);
@@ -87,7 +71,7 @@ struct buffered_frame *socket_receive(int sockfd) {
 	} else if (bframe->frame.frame_type == FRAME_TYPE_DATA || bframe->frame.frame_type == FRAME_TYPE_DATA_WITH_SEQ_RESET) {
 
 		if (bframe->frame.frame_type == FRAME_TYPE_DATA_WITH_SEQ_RESET) {
-			max_sequence_num = bframe->frame.sequence_number;
+			max_sequence_buffer_num = bframe->frame.sequence_number;
 		}
 
 		bframe->data = (char*) malloc(bframe->frame.payload_length);
@@ -96,7 +80,6 @@ struct buffered_frame *socket_receive(int sockfd) {
 			exit(EXIT_FAILURE);
 		}
 
-		//recv_len = recvfrom(sockfd, (void*) bframe->data, bframe->frame.payload_length, 0, NULL, 0);
 		recv_len = recvfrom(sockfd, (void*) bframe->data, bframe->frame.payload_length, 0, &sender, &sender_sock_len);
 
 		if (recv_len < 0 || recv_len != bframe->frame.payload_length) {
@@ -119,11 +102,10 @@ struct buffered_frame *socket_receive(int sockfd) {
 			__LINE__,
 			bframe->frame.frame_type
 		);
-		// TODO: Just ignore this frame?
 	}
 
 	free(bframe);
-	return NULL; // TODO
+	return NULL;
 }
 
 
@@ -147,7 +129,7 @@ void transmit_ack(int sockfd, sequence_num_t ack_sequence) {
 			__LINE__,
 			send_len
 		);
-		exit(EXIT_FAILURE); // TODO: Exit or return?
+		exit(EXIT_FAILURE);
 	}
 }
 
@@ -244,12 +226,23 @@ int process_received_frame(int sockfd, struct buffered_frame *bframe) {
 			break;
 
 		case ACKD:
-			printf("IMPOSSIBLE"); // TODO
+			fprintf(
+				stderr,
+				"[%s : %d]: Invalid state: process_received_frame(): passed frame with state ACKD!\n",
+				__FILE__,
+				__LINE__
+			);
 			return -1;
 			break;
 
 		default:
-			printf("IMPOSSIBLE DEFAULT"); // TODO
+			fprintf(
+				stderr,
+				"[%s : %d]: Invalid state: process_received_frame(): passed frame with unkown state (%u)!\n",
+				__FILE__,
+				__LINE__,
+				bframe->state
+			);
 			return -1;
 			break;
 	}
@@ -334,11 +327,9 @@ int main(int argc, char *argv[]) {
 			);
 		}
 
-
 		free(bframe);
 		bframe = NULL;
 	}
-
 
 	return EXIT_SUCCESS;
 }

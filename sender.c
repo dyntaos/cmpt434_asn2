@@ -114,7 +114,7 @@ int socket_send_next_frame(int fd) {
 	socket_send_frame(fd, sending_window_end);
 	sending_window_end++;
 
-	return 1; // TODO
+	return 1;
 }
 
 
@@ -263,15 +263,24 @@ void socket_receive_ack(struct buffered_frame *bframe) {
 			break;
 
 		case RECVD:
-			// TODO?
 			// The sender should not ever see a frame with the state RECV
-			printf("[%s : %d]: socket_receive_ack() RECVD\n", __FILE__, __LINE__);
+			fprintf(
+				stderr,
+				"[%s : %d]: Invalid state: socket_receive_ack() passed frame with state RECVD\n",
+				__FILE__,
+				__LINE__
+			);
 			break;
 
 		case ACKD:
-			// Reawknowledement of frame -- disregard
-			// TODO?
-			printf("[%s : %d]: socket_receive_ack() ACKD\n", __FILE__, __LINE__);
+			// The sender should not ever see a frame with the state ACKD (even if reACKd),
+			// since ACKd frames are freed the first time
+			fprintf(
+				stderr,
+				"[%s : %d]: Invalid state: socket_receive_ack() passed frame with state ACKD\n",
+				__FILE__,
+				__LINE__
+			);
 			break;
 	}
 }
@@ -491,7 +500,7 @@ int main(int argc, char *argv[]) {
 				}
 
 				strncpy(queue_text, input, input_size);
-				bframe = create_buffered_frame(queue_text, input_size); // TODO: input_size or input_size + 1?
+				bframe = create_buffered_frame(queue_text, input_size);
 
 				if (bframe == NULL) {
 					fprintf(
@@ -512,7 +521,6 @@ int main(int argc, char *argv[]) {
 				// SOCKET
 
 				socket_receive(sockfd);
-
 				while (socket_send_next_frame(sockfd) >= 0);
 
 			} else {
