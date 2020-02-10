@@ -89,7 +89,7 @@ struct buffered_frame *socket_receiver_recv(int sockfd) {
 				__FILE__,
 				__LINE__
 			);
-			//exit(EXIT_FAILURE);
+
 			free(bframe);
 			return NULL;
 		}
@@ -175,7 +175,7 @@ int process_received_frame(int sockfd, struct buffered_frame *bframe) {
 		case RECVD:
 			if (next_frame == bframe->frame.sequence_number) {
 				printf(
-					"==============================================================================\n"
+					"==============================================================\n"
 					"Got in-order frame with sequence #%u:\n%s\n",
 					bframe->frame.sequence_number,
 					bframe->data
@@ -209,7 +209,7 @@ int process_received_frame(int sockfd, struct buffered_frame *bframe) {
 
 			} else if (bframe->frame.sequence_number == next_frame - 1) {
 				printf(
-					"==============================================================================\n"
+					"==============================================================\n"
 					"Got retransmission of last correctly received in-order message with sequence # %u:\n%s",
 					bframe->frame.sequence_number,
 					bframe->data
@@ -218,7 +218,7 @@ int process_received_frame(int sockfd, struct buffered_frame *bframe) {
 
 			} else if (bframe->frame.sequence_number < next_frame - 1) {
 				printf(
-					"==============================================================================\n"
+					"==============================================================\n"
 					"Got retransmission of previously ACKd message with sequence # %u:\n%s",
 					bframe->frame.sequence_number,
 					bframe->data

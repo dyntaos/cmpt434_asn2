@@ -112,9 +112,9 @@ struct buffered_frame *socket_receiver_recv(int sockfd) {
 				recv_len,
 				bframe->frame.payload_length
 			);
-			//exit(EXIT_FAILURE);
+
 			free(bframe);
-			return NULL; // TODO IMPLEMENT THIS IN SENDER/RECEIVER
+			return NULL;
 		}
 
 		return bframe;
@@ -198,7 +198,7 @@ int process_forwarding_frame(int sock_rx_fd, int sock_tx_fd, struct buffered_fra
 		case RECVD:
 			if (next_frame == bframe->frame.sequence_number) {
 				printf(
-					"==============================================================================\n"
+					"==============================================================\n"
 					"Got in-order frame with sequence #%u:\n%s\n",
 					bframe->frame.sequence_number,
 					bframe->data
@@ -254,7 +254,7 @@ int process_forwarding_frame(int sock_rx_fd, int sock_tx_fd, struct buffered_fra
 
 			} else if (bframe->frame.sequence_number == next_frame - 1) {
 				printf(
-					"==============================================================================\n"
+					"==============================================================\n"
 					"Got retransmission of last correctly received in-order message with sequence # %u:\n%s",
 					bframe->frame.sequence_number,
 					bframe->data
@@ -264,7 +264,7 @@ int process_forwarding_frame(int sock_rx_fd, int sock_tx_fd, struct buffered_fra
 
 			} else if (bframe->frame.sequence_number < next_frame - 1) {
 				printf(
-					"==============================================================================\n"
+					"==============================================================\n"
 					"Got retransmission of previously ACKd message with sequence # %u:\n%s",
 					bframe->frame.sequence_number,
 					bframe->data
@@ -455,7 +455,6 @@ void socket_sender_recv(int fd) {
 				recv_len,
 				bframe->frame.payload_length
 			);
-			//exit(EXIT_FAILURE);
 		}
 
 	} else {
@@ -752,7 +751,6 @@ int main(int argc, char *argv[]) {
 					);
 				}
 
-				//free(bframe); // TODO: FREE OR NOT?
 				bframe = NULL;
 
 			} else {

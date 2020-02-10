@@ -9,7 +9,6 @@
 // and thus the largest sequence number is the sending window size.
 // This is because 0 is counted as a sequnce number and there is
 // (sending window size) + 1 possible sequence numbers
-#define FRAME_TYPE_HANDSHAKE				1
 #define FRAME_TYPE_DATA						2
 #define FRAME_TYPE_DATA_WITH_SEQ_RESET		3
 #define FRAME_TYPE_ACK						4

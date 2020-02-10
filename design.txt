@@ -1,0 +1,78 @@
+/**********************************
+ **           CMPT 434           **
+ **  University of Saskatchewan  **
+ **         Assignment 2         **
+ **----------------------------- **
+ **          Kale Yuzik          **
+ **     kay851@mail.usask.ca     **
+ **      kay851    11071571      **
+ **********************************/
+
+
+
+Usage:
+
+Square backets are optional arguments, no backets are manditory arguments.
+If the receiver or forwarder are not provided with a packet loss % probability, they will
+prompt via STDIN for yes/no upon receipt of a frame. All arguments which are numberic must
+be integers; floats are not accepted.
+
+
+	./receiver LocalPort [PacketLoss%]
+	./forwarder ReceiverHostname ReceiverPort MaxSendingWindowSize TimeoutSeconds [PacketLoss%]
+	./sender ReceiverHostname ReceiverPort MaxSendingWindowSize TimeoutSeconds
+
+If any of the above programs are closed, the others left open will need to be closed are re-launched
+to use them (they do not support resuming from a close partner program).
+
+
+
+Common Desgin:
+
+All 3 programs validate CLI arguments using a function validate_cli_args(), which is unique to its
+respective program since they accept differing arguments.
+
+All 3 programs use functions defined in udp.c (reused from Assignment 1) to open a UDP socket, and
+initialize it for client or server (bind) behaviour, depending on what is needed. These functions
+are: udp_client_init() and udp_server_init().
+
+The frame structure is defined in frame.h, which all programs use.
+The frame consists of:
+	-frame_type
+	-sequence_number
+	-payload_length
+
+The frame_type can be any of the following macros:
+	FRAME_TYPE_DATA: This frame contains data
+	FRAME_TYPE_DATA_WITH_SEQ_RESET: This frame contains data, and the senders circular buffer
+			of frames is at its maximum size and is 0 on the next frame.
+			This has been depricated.
+	FRAME_TYPE_ACK: This frame is an awknowledgement frame
+
+
+
+Receiver Design:
+
+The receiver
+
+
+
+
+
+
+Testing:
+
+A bash script (numgen.sh) was created to pipe to sender.
+It counts from 0 to 100000 (to mirror sequence numbers and make it easy
+to spot issues with messages & sequences being missmatched, should one exist).
+
+To use (with arbitrary arguments):
+
+	./receiver 32001 25
+	./forwarder 32002 localhost 32001 10 1 15
+	numgen.sh | ./sender localhost 32002 18 2
+
+I ran the test script with different values for the window sizes and timeout (differing
+values between the forwarder and sender). Because the maximum number of the test script
+exceeds UINT16_T max (65535), this script also tests that the programs continue functioning
+correctly when the sequence numbers overflow (by design), which did work correctly.
