@@ -219,7 +219,7 @@ void socket_sender_recv(int fd) {
 				__FILE__,
 				__LINE__
 			);
-			exit(EXIT_FAILURE);
+			//exit(EXIT_FAILURE); // TODO TESSTING THIS
 		}
 
 	} else {

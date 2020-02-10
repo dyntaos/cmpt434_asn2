@@ -89,7 +89,9 @@ struct buffered_frame *socket_receiver_recv(int sockfd) {
 				__FILE__,
 				__LINE__
 			);
-			exit(EXIT_FAILURE);
+			//exit(EXIT_FAILURE);
+			free(bframe);
+			return NULL;
 		}
 
 		return bframe;
@@ -319,7 +321,7 @@ int main(int argc, char *argv[]) {
 	for (;;) {
 
 		bframe = socket_receiver_recv(sockfd);
-		if (process_received_frame(sockfd, bframe) < 0) {
+		if (bframe != NULL && process_received_frame(sockfd, bframe) < 0) {
 			fprintf(
 				stderr,
 				"[%s : %d]: Failed to process received frame!\n",
@@ -328,7 +330,7 @@ int main(int argc, char *argv[]) {
 			);
 		}
 
-		free(bframe);
+		if (bframe !=  NULL) free(bframe);
 		bframe = NULL;
 	}
 

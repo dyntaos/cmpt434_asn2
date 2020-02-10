@@ -104,11 +104,17 @@ struct buffered_frame *socket_receiver_recv(int sockfd) {
 		if (recv_len < 0 || recv_len != bframe->frame.payload_length) {
 			fprintf(
 				stderr,
-				"[%s : %d]: Failed to receive the expected number of bytes from socket!\n",
+				"[%s : %d]: Failed to receive the expected number of bytes from socket! Likely due to real packet loss!\n"
+				"\tRead %u bytes\n"
+				"\tExpected %u bytes\n",
 				__FILE__,
-				__LINE__
+				__LINE__,
+				recv_len,
+				bframe->frame.payload_length
 			);
-			exit(EXIT_FAILURE);
+			//exit(EXIT_FAILURE);
+			free(bframe);
+			return NULL; // TODO IMPLEMENT THIS IN SENDER/RECEIVER
 		}
 
 		return bframe;
@@ -441,11 +447,15 @@ void socket_sender_recv(int fd) {
 		if (recv_len < 0 || recv_len != bframe->frame.payload_length) {
 			fprintf(
 				stderr,
-				"[%s : %d]: Failed to receive the expected number of bytes from socket!\n",
+				"[%s : %d]: Failed to receive the expected number of bytes from socket! Likely due to real packet loss!\n"
+				"\tRead %u bytes\n"
+				"\tExpected %u bytes\n",
 				__FILE__,
-				__LINE__
+				__LINE__,
+				recv_len,
+				bframe->frame.payload_length
 			);
-			exit(EXIT_FAILURE);
+			//exit(EXIT_FAILURE);
 		}
 
 	} else {
@@ -733,7 +743,7 @@ int main(int argc, char *argv[]) {
 				// DATA FROM SENDER
 
 				bframe = socket_receiver_recv(sock_rx_fd);
-				if (process_forwarding_frame(sock_rx_fd, sock_tx_fd, bframe) < 0) {
+				if (bframe != NULL && process_forwarding_frame(sock_rx_fd, sock_tx_fd, bframe) < 0) {
 					fprintf(
 						stderr,
 						"[%s : %d]: Failed to process received frame!\n",
