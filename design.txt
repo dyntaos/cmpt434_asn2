@@ -27,6 +27,9 @@ to use them (they do not support resuming from a close partner program).
 
 
 
+
+
+
 Common Desgin:
 
 All 3 programs validate CLI arguments using a function validate_cli_args(), which is unique to its
@@ -38,23 +41,101 @@ are: udp_client_init() and udp_server_init().
 
 The frame structure is defined in frame.h, which all programs use.
 The frame consists of:
-	-frame_type
-	-sequence_number
-	-payload_length
 
-The frame_type can be any of the following macros:
-	FRAME_TYPE_DATA: This frame contains data
-	FRAME_TYPE_DATA_WITH_SEQ_RESET: This frame contains data, and the senders circular buffer
-			of frames is at its maximum size and is 0 on the next frame.
-			This has been depricated.
-	FRAME_TYPE_ACK: This frame is an awknowledgement frame
+	-frame_type
+			The frame_type can be any of the following macros:
+
+				FRAME_TYPE_DATA: This frame contains data
+
+				FRAME_TYPE_DATA_WITH_SEQ_RESET: This frame contains data, and the senders circular buffer
+						of frames is at its maximum size and is 0 on the next frame.
+						This has been depricated.
+
+				FRAME_TYPE_ACK: This frame is an awknowledgement frame. The payload_length should always be
+						0 if the frame_type is FRAME_TYPE_ACK.
+
+	-sequence_number: a 2 byte unsigned integer (0 - 65535). It is permitted to overflow, and continues
+			to function as expected when it overflows.
+
+	-payload_length: the number of bytes which follow this frame header, as the payload.
+
+
+
+frame.h also defines struct buffered_frame. This is a container of a struct frame (above).
+It is used to store additional information for each frame which is NOT transmitted over the network,
+which includes:
+
+	-enum frame_state: {UNSENT, SENT, RECVD, ACKD}
+
+
+	-sent_time: The most recent epoch time this frame was sent to the destination (attempted).
+
+And data which is part of struct buffered_frame, which is sent over the network:
+
+	-struct frame (the header described above)
+
+	-char *data: pointer to the payload, which the length is defined by
+			buffered_frame.frame.payload_length in bytes
+
+
+In regards to monitoring file descriptors for data (STDIN, and socket(s)), the epoll family of system calls
+is used. This is opposed to select() or poll(). While epoll is semantically the same as poll(), its
+provides are cleaner interface and produces easier to read code. I chose it for these reasons.
+
+
 
 
 
 Receiver Design:
 
-The receiver
 
+
+
+
+
+Sender Design:
+
+The sender uses a linked queue (#include <sys/queue.h>) to queue data to send.
+It contains struct buffered_frame's.
+
+The frames which are in the process of being transmitted (in the sending window) are
+put in a circular buffer (sequenced_frames) which is dynamically allocated based on the
+sending window size provided in the CLI args. It contains the sending window size + 1 elements.
+
+The main function preforms an epoll_wait() on STDIN and it's socket with a timeout that is
+determined by the function get_timeout() (see details below).
+
+If epoll_wait() times out, service_timeout() is called which examines the sending window for
+buffered_frame's which are in state SENT and have a sent_time which is less than now minus
+the timeout value provided by the CLI argument. Any frames which meet this criteria are retransmitted
+and their sent_time is set to the current epoch time.
+
+If epoll_wait() returns STDIN, getline() is called and the string is put in the linked queue.
+socket_send_next_frame() is called until it returns -1, which indicates that the sending window
+is full or the linked queue is now empty.
+
+If epoll_wait returns the socket, the header and payload (if payload exists) is read from the
+socket. If the frame is an ACK, the header is passed to socket_receive_ack(), which checks
+if it is the next in order frame, a re-awknowledgement, etc and preforms the action specified in the
+assignment spec.
+
+
+get_timeout():
+This function examines the sending window for for buffered_frames with a state of SENT
+and finds the item with the timeout value that occurs the soonest and returns that value in
+milliseconds (as that is what epoll_wait() takes for the timeout value).
+
+
+
+
+
+Forwarder Design:
+
+The forwarder follows the same design as the receiver and sender, using the circular
+buffer described above in the sender as the intermediary between the receiver and sender
+code described above. A large degree of code was reused with minor modifications to
+implement the forwarder, so there is not much additional to mention here that
+has not already been described.
 
 
 
